@@ -97,14 +97,56 @@ function largestRemainder(exact: number[], total: number): number[] {
  * kann. Deshalb werden drei Kandidaten geprüft und der genommen, der die
  * Bruttosumme **exakt** trifft – also die Summe der Ladenpreise erhält.
  *
- * Nur wenn keiner passt (arithmetisch möglich, praktisch selten), gewinnt die
- * Norm: Dann verschiebt sich der Bruttobetrag um einen Cent.
+ * Nur wenn keiner passt, gewinnt die Norm: Dann verschiebt sich der
+ * Bruttobetrag um einen Cent.
+ *
+ * ## Wie oft das vorkommt, und wohin der Cent geht
+ *
+ * „Praktisch selten" stand hier lange und war zu freundlich: Bei 19 % sind
+ * **16 % aller Bruttobeträge arithmetisch unerreichbar**. Es gibt für sie
+ * schlicht kein ganzzahliges Netto. Der bekannteste Fall ist ausgerechnet
+ * der, mit dem CLAUDE.md die Regel erklärt hat – 39,80 € liegt in einer
+ * Lücke: 3344 Cent netto ergeben 39,79 €, 3345 Cent ergeben 39,81 €, und
+ * dazwischen ist nichts.
+ *
+ * Die Richtung des Cents war bis dahin ein Rundungszufall: `start` ist der
+ * gerundete Quotient, und der fällt mal darüber, mal darunter. Über alle
+ * Lücken bei 19 % gerechnet ging er in 8404 Fällen nach oben und in 7562
+ * nach unten – der Kunde zahlte also in etwas mehr als der Hälfte der
+ * Lückenfälle **einen Cent mehr, als ausgezeichnet war**.
+ *
+ * Das ist die eine Richtung, die eine Werkstatt nicht wählen sollte. Ein
+ * ausgezeichneter Preis ist eine Zusage; ihn zu unterschreiten ist
+ * folgenlos, ihn zu überschreiten nicht. Deshalb wird jetzt bewusst der
+ * größte Nettowert genommen, dessen Bruttobetrag den eingegebenen **nicht
+ * übersteigt**. Aus 2 × 19,90 € werden damit 39,79 € – ein Cent zugunsten
+ * des Kunden, jedes Mal und nachvollziehbar, statt einer Münze.
+ *
+ * An BR-CO-17 ändert das nichts: Die Steuer folgt weiterhin aus der
+ * Bemessungsgrundlage, gleich welches Netto gewählt wird.
  */
 function netFromGross(grossCents: number, rate: TaxRate): number {
   if (rate === 0) return grossCents;
+  const brutto = (net: number) => net + round((net * rate) / 100);
   const start = round(grossCents / (1 + rate / 100));
+
+  // Erste Wahl: ein Netto, das die Summe exakt reproduziert.
   for (const candidate of [start, start - 1, start + 1]) {
-    if (candidate + round((candidate * rate) / 100) === grossCents) return candidate;
+    if (brutto(candidate) === grossCents) return candidate;
+  }
+
+  /*
+    Sonst der nächstgelegene Wert, der den eingegebenen Betrag dem Betrag
+    nach nicht überschreitet. Von oben nach unten gesucht, damit der
+    kleinstmögliche Abstand gewinnt; bei Gutschriften (negative Beträge)
+    kehrt sich „nicht überschreiten" mit dem Vorzeichen um.
+  */
+  const zuVielt = grossCents < 0
+    ? (wert: number) => wert < grossCents
+    : (wert: number) => wert > grossCents;
+
+  for (const candidate of [start + 1, start, start - 1, start - 2]) {
+    if (!zuVielt(brutto(candidate))) return candidate;
   }
   return start;
 }

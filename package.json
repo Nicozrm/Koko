@@ -19,7 +19,8 @@
     "verify:status": "node --experimental-strip-types --no-warnings scripts/verify-status.mjs",
     "verify:cert": "node --experimental-strip-types --no-warnings scripts/verify-cert.mjs",
     "verify:instruments": "node --experimental-strip-types --no-warnings scripts/verify-instruments.mjs",
-    "verify:privacy": "node --experimental-strip-types --no-warnings scripts/verify-privacy.mjs"
+    "verify:privacy": "node --experimental-strip-types --no-warnings scripts/verify-privacy.mjs",
+    "verify:invoice": "node --experimental-strip-types --no-warnings scripts/verify-invoice.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

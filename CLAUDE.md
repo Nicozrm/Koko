@@ -29,6 +29,7 @@ npm run verify:status     # Werkstattablauf gegen das Datenbankschema
 npm run verify:cert       # Reparaturzertifikat: Format, Signatur, QR-Größe, Geheimnisse
 npm run verify:instruments # Physik der Instrumente, Bruchmechanik, Drosselung
 npm run verify:privacy    # Datenschutz-Nachweis: kein Weg nach draußen
+npm run verify:invoice    # Geldrechnung: Cent, Steuergruppen, Ladenpreis
 
 bash .github/scripts/verify-alle.sh   # alle verify:*-Skripte nacheinander
                                       # (genau das, was CI ausführt)
@@ -76,12 +77,12 @@ tatsächlich saß.
 
 ### Die fachlichen Prüfskripte
 
-Der Prüfstand deckt die Regeln dieser Datei ab. Daneben stehen acht Skripte,
+Der Prüfstand deckt die Regeln dieser Datei ab. Daneben stehen neun Skripte,
 die alle dasselbe prüfen: dass eine Zusage der Seite noch stimmt. Sie sind
 kein Ersatz für Tests, sondern genau die Stellen, an denen ein stiller Fehler
 die Website zur Lügnerin macht, ohne dass jemand etwas merkt.
 
-**Alle acht laufen in CI**, und zwar an zwei Stellen: `pruefungen.yml` an
+**Alle neun laufen in CI**, und zwar an zwei Stellen: `pruefungen.yml` an
 jedem Pull Request (das Tor vor dem Merge) und `nextjs.yml` beim Push auf
 `main` (die letzte Bremse vor dem Veröffentlichen). Bis August 2026 taten
 sie das nicht – es lief nur der Prüfstand und `verify:qr`, die übrigen
@@ -132,6 +133,17 @@ anlegt, trägt nirgends etwas nach.
   Quelltext, dass die beteiligten Dateien kein `fetch`, kein `sendBeacon`,
   keinen Browserspeicher und keinen Zählpixel enthalten, dass jede gelesene
   Angabe auch angezeigt wird, und dass die Seite keine Häufigkeit behauptet.
+- `verify:invoice` – die Geldrechnung des Rechnungswerkzeugs. Ein Cent-Fehler
+  ist dort unsichtbar: Das gedruckte Blatt bleibt plausibel, während der
+  Empfänger die E-Rechnung Tage später automatisch zurückweist, weil
+  EN 16931 nachrechnet. Geprüft werden keine Beispiele, sondern
+  **Invarianten** gegen 4.000 gewürfelte Belege – Netto + Steuer = Brutto auf
+  jeder Ebene, Steuer je Gruppe aus der Bemessungsgrundlage (BR-CO-17),
+  Positionen summieren sich auf ihre Gruppe, kein Steuerausweis bei § 19 und
+  § 25a, überall ganzzahlige Cent. Dazu die Zusage „nie teurer als
+  eingegeben“ gegen jeden Bruttopreis von 0,01 € bis 2.000 €. Der Würfel hat
+  einen festen Startwert – ein Fehlschlag in Lauf 3182 muss sich nachstellen
+  lassen.
 
 ## Deployment (Cloudflare Workers – empfohlen)
 
@@ -343,6 +355,7 @@ scripts/
   verify-instruments.mjs Sturzphysik und Bruchmechanik gegen das Tafelwerk,
                          Spektrum-Abbildung, Klirrfaktor
   verify-privacy.mjs     Fingerabdruck-Nachweis: kein Weg nach draußen
+  verify-invoice.mjs     Geldrechnung: Invarianten, Steuergruppen, Ladenpreis
 ```
 
 ## Konventionen
@@ -516,9 +529,23 @@ per Seiten-Metadaten, `Disallow: /intern/` in `robots.ts`.
 - **Mehrseitigkeit** rechnet `lib/invoice/paginate.ts`: Es verteilt die
   Positionen auf Blätter, setzt auf jedes Folgeblatt einen Fortsetzungskopf
   („Rechnung … · Seite 2 von 2") und führt den **Übertrag** als erste Zeile
-  mit. Der Übertrag ist der Bruttobetrag der vorangegangenen Blätter – wer
-  hier etwas ändert, prüft, dass Übertrag plus Folgepositionen wieder die
-  Endsumme ergeben.
+  mit. Der Übertrag ist der Bruttobetrag der vorangegangenen Blätter – dass
+  Übertrag plus Folgepositionen wieder die Endsumme ergeben, prüft seit
+  Neuestem `verify:invoice`, nicht mehr der nächste Mensch. Der Satz stand
+  hier lange im Imperativ und war damit eine Bitte; der Übertrag ist aber
+  die einzige Zahl auf dem Blatt, die ein Kunde tatsächlich nachrechnet.
+
+  Der heikelste Pfad ist der, an dem der Summenblock nicht mehr aufs
+  Vorblatt passt: Er bekommt ein eigenes Blatt, bis zu drei Zeilen wandern
+  mit (kein Schusterjunge), und **danach werden die Überträge neu
+  bestimmt** – die einzige Stelle, an der sie nachträglich verändert
+  werden. Der Zufall trifft sie nicht zuverlässig, deshalb schreitet das
+  Prüfskript die Grenze zusätzlich systematisch ab: jede Positionszahl von
+  1 bis 60, mit und ohne Zahlungsabschnitt, kurze und lange Texte.
+
+  Dass der Pfad wirklich abgedeckt ist, wurde nachgewiesen statt vermutet:
+  Entfernt man die Neuberechnung der Überträge, fallen 610 von 1200
+  gewürfelten Belegen durch.
 - **Belegarten** (`lib/invoice/doctype.ts`): Rechnung, Kostenvoranschlag,
   Angebot, Gutschrift, Storno. Dieselben Positionen und dieselbe Rechenlogik,
   anderes Kürzel im Nummernkreis und andere Sprache im Blatt.
@@ -590,14 +617,36 @@ verlangt es in BR-CO-17, und beide Wege lagen im Test regelmäßig einen Cent
 auseinander. Das gedruckte Blatt sah dabei weiterhin plausibel aus, während die
 E-Rechnung automatisch zurückgewiesen wurde.
 
-Damit trotzdem kein Kunde „2 × 19,90 = 39,79“ liest, gilt: **Der eingegebene
-Wert bleibt unangetastet, verteilt wird nur der abgeleitete.** Bei
-Bruttoeingabe stehen die Bruttobeträge der Positionen fest; die Nettobeträge
-werden mit der Methode der größten Reste so verteilt, dass ihre Summe die
-Bemessungsgrundlage trifft (`largestRemainder`). `netFromGross` sucht zusätzlich
-den Nettowert, der die Bruttosumme **exakt** reproduziert – das gelingt in rund
-83 % der Fälle. Sonst gewinnt die Norm und ein Cent wandert auf die größte
-Position.
+Damit ein Ladenpreis trotzdem stehen bleibt, gilt: **Der eingegebene Wert
+bleibt unangetastet, verteilt wird nur der abgeleitete.** Bei Bruttoeingabe
+stehen die Bruttobeträge der Positionen fest; die Nettobeträge werden mit der
+Methode der größten Reste so verteilt, dass ihre Summe die Bemessungsgrundlage
+trifft (`largestRemainder`). `netFromGross` sucht zusätzlich den Nettowert, der
+die Bruttosumme **exakt** reproduziert – das gelingt in rund 84 % der Fälle.
+
+**Die restlichen 16 % sind keine Ungenauigkeit, sondern eine Lücke.** Hier
+stand lange das Beispiel „2 × 19,90 = 39,79“ als das, was nicht passieren
+darf. Es kann aber gar nicht anders sein: Bei 19 % gibt es für 39,80 € kein
+ganzzahliges Netto. 3344 Cent ergeben 39,79 €, 3345 Cent ergeben 39,81 €, und
+dazwischen liegt nichts. Über alle Beträge gerechnet ist **jeder sechste
+Bruttobetrag bei 19 % unerreichbar**. Wer hier eine exakte Summe verspricht,
+verspricht etwas, das die Arithmetik nicht hergibt – die Regel erklärte sich
+also ausgerechnet an einem Fall, den sie nicht einhalten kann.
+
+**In der Lücke geht der Cent nach unten, nie nach oben.** Vorher entschied
+das die Rundung: `start` ist der gerundete Quotient und fällt mal darüber,
+mal darunter – über alle Lücken bei 19 % in 8404 Fällen nach oben und in 7562
+nach unten. In gut der Hälfte der Lückenfälle zahlte der Kunde also **einen
+Cent mehr, als ausgezeichnet war**; gemessen an allen Preisen von 0,01 € bis
+2.000 € waren das 16.808 von 200.000. Ein ausgezeichneter Preis ist eine
+Zusage: ihn zu unterschreiten ist folgenlos, ihn zu überschreiten nicht.
+`netFromGross` nimmt deshalb den größten Nettowert, dessen Bruttobetrag den
+eingegebenen **nicht übersteigt**. An BR-CO-17 ändert das nichts – die Steuer
+folgt weiterhin aus der Bemessungsgrundlage, gleich welches Netto gewählt wird.
+
+`verify:invoice` hält beides fest: die Invarianten gegen 4.000 gewürfelte
+Belege und die Zusage „nie teurer als eingegeben“ gegen jeden Bruttopreis von
+0,01 € bis 2.000 €.
 
 ### Vorgangsverwaltung (`/status`, `/intern/werkstatt`)
 
